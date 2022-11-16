@@ -5,23 +5,36 @@ String.prototype.toDate = function () {
   return new Date(parseInt(this.substring(0, 8), 16) * 1000);
 };
 
-Date.prototype.addDays = function(days) {
+Date.prototype.addDays = function (days) {
   var date = new Date(this.valueOf());
   date.setDate(date.getDate() + days);
   return date;
+}
+
+Date.prototype.addHours = function(h) {
+  this.setTime(this.getTime() + (h*60*60*1000));
+  return this;
 }
 
 function getDates(startDate, stopDate) {
   var dateArray = new Array();
   var currentDate = startDate;
   while (currentDate <= stopDate) {
-      dateArray.push(new Date (currentDate));
-      currentDate = currentDate.addDays(1);
+    dateArray.push(new Date(currentDate));
+    currentDate = currentDate.addDays(1);
   }
   return dateArray;
 }
 
-randomUUID = function(){return(""+1e7+-1e3+-4e3+-8e3+-1e11).replace(/1|0/g,function(){return(0|Math.random()*16).toString(16)})}
+function addLeadingZeros(num, totalLength) {
+  return String(num).padStart(totalLength, '0');
+}
+
+function roundNum(num) {
+  Math.round(num * 100) / 100
+}
+
+randomUUID = function () { return ("" + 1e7 + -1e3 + -4e3 + -8e3 + -1e11).replace(/1|0/g, function () { return (0 | Math.random() * 16).toString(16) }) }
 
 
 randomDate = function (start, end) {
@@ -68,11 +81,21 @@ randomText = function (nwords) {
 }
 
 
+checkRS = function () {
+  var st = rs.status(), cfg = rs.config(), nn = 0;
+  st.members.forEach(s => {
+    var tags = JSON.stringify(cfg.members[nn].tags);
+    console.log(`Host ${s.name}`);
+    console.log(`\tpriority ${cfg.members[nn].priority} | votes ${cfg.members[nn].votes} | health: ${s.health} | ${s.stateStr}`);
+    console.log(`\ttags:${tags}`);
+    nn++;
+  });
+}
 
 // https://www.npmjs.com/package/cli-color
 // only compatible with mongosh, for legacy shell use just print() instead of console.log
 // npm install cli-color
-checkRS = function () {
+checkRSc = function () {
   var st = rs.status(), cfg = rs.config(), nn = 0;
   st.members.forEach(s => {
     var tags = JSON.stringify(cfg.members[nn].tags);
@@ -110,8 +133,47 @@ dr = function () {
 
 
 
-deleteAllDBs = function (){
-  db.getMongo().getDBs().databases.forEach(function (thisDb) {db.getSiblingDB(thisDb.name).dropDatabase()})
+deleteAllDBs = function () {
+  db.getMongo().getDBs().databases.forEach(function (thisDb) { db.getSiblingDB(thisDb.name).dropDatabase() })
+}
+
+
+colls = function () {
+  var excludeDB = ['admin', 'config', 'local'];
+  db.getMongo().getDBs().databases.forEach(function (thisDb) {
+    if (excludeDB.indexOf(thisDb.name) == -1) {
+      db.getSiblingDB(thisDb.name).getCollectionNames().forEach(function (coll) {
+        print(`|\tCollection '${coll}'`)
+
+        print(`|\t\t Data size ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalSize / 1024) / 1024).toFixed(2)} in MB`);
+        print(`|\t\t Storage size ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().storageSize / 1024) / 1024).toFixed(2)} in MB`);
+        print(`|\t\t Index size ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalIndexSize / 1024) / 1024).toFixed(2)} in MB`);
+        print(`|\t\t Overage object size ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().avgObjSize / 1024)).toFixed(2)} in KB`);
+      });
+    }
+  })
+}
+
+
+oplog = function () {
+  let div = 1000 * 1000 * 1000;
+  let oplogSize=db.getSiblingDB('local').getCollection('oplog.rs').stats().size;
+  print(`size ${(oplogSize / div).toFixed(2)} GB`)
+  print(`max size ${(db.getSiblingDB('local').getCollection('oplog.rs').stats().maxSize / div).toFixed(2)} GB`)
+  
+  let firstOp, cc = db.getSiblingDB('local').getCollection('oplog.rs').find({}, { op: 1, wall: 1 }).sort({ $natural: 1 }).limit(1);
+  cc.forEach(function (doc) {firstOp=doc.wall;})
+  print(`first operation ${firstOp}`)
+  
+  let lastOp, cc2 = db.getSiblingDB('local').getCollection('oplog.rs').find({}, { op: 1, wall: 1 }).sort({ $natural: -1 }).limit(1);
+  cc2.forEach(function (doc) {lastOp=doc.wall;})
+  print(`last operation ${lastOp}`)
+
+  let mstime=(lastOp.getTime()-firstOp.getTime())/(60 * 60 * 1000);
+  let oplogGBhr = (oplogSize/(mstime));
+  print(`Oplog GB/Hour ${(oplogGBhr/div).toFixed(4)}`);
+
+  // GB/hr is calculated as <size of oplog>/(<end time>-<start time>) 
 }
 
 
@@ -119,24 +181,26 @@ indexStats = function () {
   var excludeDB = ['admin', 'config', 'local'];
   db.getMongo().getDBs().databases.forEach(function (thisDb) {
     if (excludeDB.indexOf(thisDb.name) == -1) {
-      print(`================================================================================================`)
+      print(`|================================================================================================`)
       print(`| Database '${thisDb.name}'`)
-      print(`================================================================================================`)
+      print(`|================================================================================================`)
       db.getSiblingDB(thisDb.name).getCollectionNames().forEach(function (coll) {
-
         try {
           print(`|\tCollection '${coll}' - Total Index size ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalIndexSize / 1024) / 1024).toFixed(2)} in MB`);
-          db.getSiblingDB(thisDb.name).getCollection(coll).aggregate([{
-            $indexStats: {}
-          }, {
-            $sort: {
-              "accesses.ops": 1
-            }
-          }]).forEach(function (idx) {
+          db.getSiblingDB(thisDb.name).getCollection(coll).aggregate([
+            { $indexStats: {} },
+            { $sort: {  "name":1 ,"accesses.ops": -1}}
+          ]).forEach(function (idx) {
             print(`|\t\t index '${idx.name}'`);
             print(`|\t\t\t accessed ${idx.accesses.ops} times, since ${idx.accesses.since}`);
             print(`|\t\t\t is ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().indexSizes[idx.name] / 1024) / 1024).toFixed(2)} MB big`)
             print(`|\t\t\t detected defragmentation ${db.getSiblingDB(thisDb.name).getCollection(coll).stats({ indexDetails: true }).indexDetails[idx.name]["block-manager"]["file bytes available for reuse"]} bytes`);
+            print(`|\t\t\t bytes currently in cache ${db.getSiblingDB(thisDb.name).getCollection(coll).stats({ indexDetails: true }).indexDetails[idx.name]["cache"]["bytes currently in the cache"]} bytes`);
+            if (idx.spec.expireAfterSeconds){
+              print(`|\t\t\t TTL index expireAfterSeconds:${idx.spec.expireAfterSeconds}`);
+            }
+            print(`|\t\t\t fields ${JSON.stringify(idx.spec.key)}`);
+
           });
         } catch (err) {
           // when the exception occurs it is because a view or profiler collection
@@ -169,31 +233,40 @@ indexSize = function () {
   return Math.round(total / div) + ' MB';
 }
 
-oplogSize = function(){
-  let div = 1024 * 1024;
-  totalSize=Math.round(db.getSiblingDB("local").oplog.rs.stats().maxSize/div)
-  print(`This cluster oplog size is ${totalSize} MB`)
+
+
+
+// produces dummy documents for testing
+loadDummy = function (dbName, collName, numberOfDocuments, commitEveryNDocs, dropCollection) {
+  if (dropCollection) {
+      console.log(`dropping ${dbName}.${collName}`);
+      db.getSiblingDB(dbName).getCollection(collName).drop()
+  }
+  if ((numberOfDocuments%commitEveryNDocs)>0){console.log(`commitEveryNDocs (${commitEveryNDocs}) must divide numberOfDocuments (${numberOfDocuments}) perfectly`);return;}
+
+  let docs = [], batch = commitEveryNDocs; 
+  for (n=1;n<=numberOfDocuments;n++){
+
+      docs.push(genDummyDoc(n));
+      if (docs.length == batch) {
+          db.getSiblingDB(dbName).getCollection(collName).insertMany(docs, {ordered: false, writeConcern:{ w: 0, j: false }});
+          console.log(`loaded ${n} docs in ${dbName}.${collName}`)
+          docs = []
+      }
+
+  }
 }
 
 
 
-// produces dummy documents for testing, it's slow
-loadDummy = function(n,t){
-  // db.foo.drop();
-  for (i=0;i<n;i++){
-    let a = db.foo.insertOne({
-      "a":i, 
-      "b":randomString(12), 
-      "c": randomNumber(0,100), 
-      "d":new ISODate(),
-      "e":randomText(500),
-      "f":randomList(["A","B","C","D"]),
-      "g":"".padEnd(100)}); 
-    if (t!=null){
-      let d = new Date();
-      print(`doc #${i} ${a.insertedId} ${d.toISOString().split('T')[1]}`);
-      sleep(t);
-    }
+genDummyDoc=function(x){
+  return {
+    "a": x,
+    "b": randomString(12),
+    "c": randomNumber(0, 100),
+    "d": new ISODate(),
+    "e": randomText(500),
+    "f": randomList(["A", "B", "C", "D"]),
   }
 }
 
