@@ -271,3 +271,32 @@ genDummyDoc=function(x){
 }
 
 
+// mongosh --nodb
+let source = "mongodb://";
+let destination = "mongodb+srv://";
+
+dataValidation = function (database, collection, checkNDocs, source, destination) {
+  // how many document to sample and match between the two clusters
+  let found = 0;
+  // connect to the source cluster
+  // connect and select random documents from a specific collection on the source cluster
+  db = new Mongo(source).getDB(database);
+  let sourceIds = db.getCollection(collection).aggregate([{ "$sample": { "size": checkNDocs } }, { "$project": { "_id":1 } }])
+  // connect to the destination and search for selected documents
+  db = new Mongo(destination).getDB(database);
+  sourceIds.forEach(__doc => {
+      // comment the print part if you don't want to see the output of every single found document
+      let doc=db.getCollection(collection).find({ "_id": __doc["_id"] }, { "_id": 1})
+      if (doc) {
+          print(doc);
+          found++;
+      }
+  });
+  // output
+  if (found == checkNDocs) {
+      print(`All ${checkNDocs} sampled documents in ${database}.${collection} were found on the destination cluster`)
+  } else {
+      print(`Data validation failed. Only ${found} documents in ${database}.${collection} were found on the destination cluster`)
+  }
+}
+
