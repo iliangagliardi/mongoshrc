@@ -1,18 +1,16 @@
-//https://www.npmjs.com/package/cli-color
-const cli = require('cli-color');
 const { exit } = require('process');
 
 
-ObjectId.prototype.toDate=function(){
+ObjectId.prototype.toDate = function () {
   return new Date(parseInt(this.toJSON().substring(0, 8), 16) * 1000);
+}
+
+Date.prototype.toObjectId = function () {
+  return new ObjectId(Math.floor(this.getTime() / 1000).toString(16) + "0000000000000000");
 }
 
 String.prototype.toDate = function () {
   return new Date(parseInt(this.substring(0, 8), 16) * 1000);
-};
-
-Date.prototype.toObjectId = function () {
-  return new ObjectId(Math.floor(this.getTime() / 1000).toString(16) + "0000000000000000");
 }
 
 Date.prototype.addDays = function (days) {
@@ -35,15 +33,15 @@ Date.prototype.getStringDate = function () {
   return this.toISOString().split('T')[0];
 }
 
-Date.prototype.getWeekNumber = function(){
+Date.prototype.getWeekNumber = function () {
   var d = new Date(Date.UTC(this.getFullYear(), this.getMonth(), this.getDate()));
   var dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  var yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
-  return Math.ceil((((d - yearStart) / 86400000) + 1)/7)
+  var yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
 };
 
-Date.prototype.getWeekYear = function() {
+Date.prototype.getWeekYear = function () {
   var date = new Date(this.getTime());
   date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
   return date.getFullYear();
@@ -99,13 +97,11 @@ randomDouble = function (min, max) {
   return Double((Math.random() * (max - min) + min).toFixed(2));
 }
 
-
 randomNumber = function (min, max) {
   min = Math.ceil(min);
   max = Math.floor(max);
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
-
 
 randomList = function (arr) {
   if (Array.isArray(arr)) {
@@ -134,11 +130,11 @@ randomMongoDBGeoCoords = function (lat, long) {
   return coord;
 }
 
-
+// a quick glance at a replica set status
 checkRS = function () {
-  var st = rs.status(), cfg = rs.config(), nn = 0;
+  let st = rs.status(), cfg = rs.config(), nn = 0;
   st.members.forEach(s => {
-    var tags = JSON.stringify(cfg.members[nn].tags);
+    let tags = JSON.stringify(cfg.members[nn].tags);
     console.log(`Host ${s.name}`);
     console.log(`\tpriority ${cfg.members[nn].priority} | votes ${cfg.members[nn].votes} | health: ${s.health} | ${s.stateStr}`);
     console.log(`\ttags:${tags}`);
@@ -146,18 +142,27 @@ checkRS = function () {
   });
 }
 
-// https://www.npmjs.com/package/cli-color
-// only compatible with mongosh, for legacy shell use just print() instead of console.log
-// npm install cli-color
+//https://www.npmjs.com/package/cli-table
+//npm install cli-table
 checkRSc = function () {
-  var st = rs.status(), cfg = rs.config(), nn = 0;
+  let Table = require('cli-table');
+  let table = new Table({
+    head: ['Host', 'Status', 'Priority', 'Votes', 'Health', 'Tags']
+    , colWidths: [60, 15, 10, 10, 10, 30]
+  });
+  let st = rs.status(), cfg = rs.config(), nn = 0;
   st.members.forEach(s => {
-    var tags = JSON.stringify(cfg.members[nn].tags);
-    console.log(cli.white.bgGreen.bold(`Host ${s.name}`));
-    console.log(cli.yellow(`\tpriority ${cfg.members[nn].priority} | votes ${cfg.members[nn].votes} | health: ${s.health} | ${s.stateStr}`));
-    console.log(cli.white(`\ttags:${tags}`));
+    let tags = JSON.stringify(cfg.members[nn].tags);
+    table.push([
+      `${s.name}`,
+      `${s.stateStr}`,
+      `${cfg.members[nn].priority}`,
+      `${cfg.members[nn].votes}`,
+      `${s.health}`,
+      `${tags}`])
     nn++;
   });
+  console.log(table.toString());
 }
 
 
@@ -202,8 +207,6 @@ deleteAllDBs = function () {
 }
 
 
-//a=db.getCollectionInfos({name:"fooView"} )
-//a[0]['options']['viewOn']
 
 // export csv
 colls = function (path) {
@@ -223,9 +226,9 @@ colls = function (path) {
             // it's a collection
             collInfo += `${thisDb.name};${coll};`
 
-            if (db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalSize){
+            if (db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalSize) {
               collInfo += `${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalSize / 1024) / 1024).toFixed(2)};`
-            }  else {
+            } else {
               // 4.2
               collInfo += `${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().size / 1024) / 1024).toFixed(2)};`
             }
@@ -251,25 +254,46 @@ colls = function (path) {
 
 
 
-oplog = function () {
+oplog = function (tabled) {
+
   let div = 1000 * 1000 * 1000;
   let oplogSize = db.getSiblingDB('local').getCollection('oplog.rs').stats().size;
-  print(`size ${(oplogSize / div).toFixed(2)} GB`)
-  print(`max size ${(db.getSiblingDB('local').getCollection('oplog.rs').stats().maxSize / div).toFixed(2)} GB`)
 
   let firstOp, cc = db.getSiblingDB('local').getCollection('oplog.rs').find({}, { op: 1, wall: 1 }).sort({ $natural: 1 }).limit(1);
   cc.forEach(function (doc) { firstOp = doc.wall; })
-  print(`first operation ${firstOp}`)
 
   let lastOp, cc2 = db.getSiblingDB('local').getCollection('oplog.rs').find({}, { op: 1, wall: 1 }).sort({ $natural: -1 }).limit(1);
   cc2.forEach(function (doc) { lastOp = doc.wall; })
-  print(`last operation ${lastOp}`)
 
   let mstime = (lastOp.getTime() - firstOp.getTime()) / (60 * 60 * 1000);
   let oplogGBhr = (oplogSize / (mstime));
-  print(`Oplog GB/Hour ${(oplogGBhr / div).toFixed(4)}`);
 
   // GB/hr is calculated as <size of oplog>/(<end time>-<start time>) 
+
+  if (tabled) {
+    var Table = require('cli-table');
+    let t = new Table({
+      rows: [
+        ['Size', `${(oplogSize / div).toFixed(2)} GB`],
+        ['Max size', `${(db.getSiblingDB('local').getCollection('oplog.rs').stats().maxSize / div).toFixed(2)} GB`],
+        ['First operation', `${firstOp}`],
+        ['Last operation', `${lastOp}`],
+        ['Oplog GB/Hour',`${(oplogGBhr / div).toFixed(4)}`]
+      ]
+    })
+    console.log(t.toString());
+  } else {
+    print(`size ${(oplogSize / div).toFixed(2)} GB`)
+    print(`max size ${(db.getSiblingDB('local').getCollection('oplog.rs').stats().maxSize / div).toFixed(2)} GB`)
+    print(`first operation ${firstOp}`)
+    print(`last operation ${lastOp}`)
+    print(`Oplog GB/Hour ${(oplogGBhr / div).toFixed(4)}`);
+  }
+}
+
+oplogEnlarge = function (n){
+  db.adminCommand({replSetResizeOplog: 1, size: Double(n)})
+  oplog(true);
 }
 
 
@@ -397,8 +421,8 @@ genDummyDoc2 = function (x) {
 
 
 // mongosh --nodb
-let source = "mongodb://ilian:Password.@mongo1/?replicaSet=testRS";
-let destination = "mongodb+srv://ilian:Password.@migration.nkjj0.mongodb.net";
+let source = "mongodb://";
+let destination = "mongodb+srv://";
 
 dataValidation = function (database, collection, checkNDocs, source, destination) {
   // how many document to sample and match between the two clusters
