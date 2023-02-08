@@ -1,9 +1,19 @@
 //https://www.npmjs.com/package/cli-color
 const cli = require('cli-color');
+const { exit } = require('process');
+
+
+ObjectId.prototype.toDate=function(){
+  return new Date(parseInt(this.toJSON().substring(0, 8), 16) * 1000);
+}
 
 String.prototype.toDate = function () {
   return new Date(parseInt(this.substring(0, 8), 16) * 1000);
 };
+
+Date.prototype.toObjectId = function () {
+  return new ObjectId(Math.floor(this.getTime() / 1000).toString(16) + "0000000000000000");
+}
 
 Date.prototype.addDays = function (days) {
   var date = new Date(this.valueOf());
@@ -11,12 +21,35 @@ Date.prototype.addDays = function (days) {
   return date;
 }
 
-Date.prototype.addHours = function(h) {
-  this.setTime(this.getTime() + (h*60*60*1000));
+Date.prototype.addHours = function (h) {
+  this.setTime(this.getTime() + (h * 60 * 60 * 1000));
   return this;
 }
 
-function getDates(startDate, stopDate) {
+Date.prototype.addMinutes = function (mm) {
+  this.setTime(this.getTime() + (mm * 60 * 1000));
+  return this;
+}
+
+Date.prototype.getStringDate = function () {
+  return this.toISOString().split('T')[0];
+}
+
+Date.prototype.getWeekNumber = function(){
+  var d = new Date(Date.UTC(this.getFullYear(), this.getMonth(), this.getDate()));
+  var dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  var yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
+  return Math.ceil((((d - yearStart) / 86400000) + 1)/7)
+};
+
+Date.prototype.getWeekYear = function() {
+  var date = new Date(this.getTime());
+  date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
+  return date.getFullYear();
+}
+
+getDates = function (startDate, stopDate) {
   var dateArray = new Array();
   var currentDate = startDate;
   while (currentDate <= stopDate) {
@@ -26,11 +59,11 @@ function getDates(startDate, stopDate) {
   return dateArray;
 }
 
-function addLeadingZeros(num, totalLength) {
+addLeadingZeros = function (num, totalLength) {
   return String(num).padStart(totalLength, '0');
 }
 
-function roundNum(num) {
+roundNum = function (num) {
   Math.round(num * 100) / 100
 }
 
@@ -50,6 +83,20 @@ randomString = function (n) {
     result += characters.charAt(Math.floor(Math.random() * charactersLength));
   }
   return result;
+}
+
+randomStringWithPattern = function (n, characters) {
+  var length = n;
+  var result = '';
+  var charactersLength = characters.length;
+  for (var i = 0; i < length; i++) {
+    result += characters.charAt(Math.floor(Math.random() * charactersLength));
+  }
+  return result;
+}
+
+randomDouble = function (min, max) {
+  return Double((Math.random() * (max - min) + min).toFixed(2));
 }
 
 
@@ -78,6 +125,13 @@ randomText = function (nwords) {
     if (t < nwords) ret += " ";
   }
   return ret;
+}
+
+randomMongoDBGeoCoords = function (lat, long) {
+  let coord = []
+  coord.push(randomDoubleFixedN(lat, (lat + randomDouble(-2.02, -3.05)), 6))
+  coord.push(randomDoubleFixedN(long, (long + randomDouble(1.01, 2.05)), 6))
+  return coord;
 }
 
 
@@ -134,44 +188,86 @@ dr = function () {
 
 
 deleteAllDBs = function () {
-  db.getMongo().getDBs().databases.forEach(function (thisDb) { db.getSiblingDB(thisDb.name).dropDatabase() })
+  var dbnames = function () {
+    var r = db.adminCommand({
+      listDatabases: 1
+    });
+    if (!r || r.databases === undefined) {
+      return [];
+    };
+    return r.databases.map(n => n.name).filter(name => name !== "admin" && name !== "config" && name !== "local");
+  };
+  dbl = dbnames();
+  dbl.forEach(function (thisDb) { db.getSiblingDB(thisDb).dropDatabase() })
 }
 
 
-colls = function () {
-  var excludeDB = ['admin', 'config', 'local'];
+//a=db.getCollectionInfos({name:"fooView"} )
+//a[0]['options']['viewOn']
+
+// export csv
+colls = function (path) {
+  // header
+  let collInfo = 'Database;Collection;Data size MB;Storage size MB;Avg obj size KB;Index size MB\n';
+  let excludeDB = ['admin', 'config', 'local'];
   db.getMongo().getDBs().databases.forEach(function (thisDb) {
     if (excludeDB.indexOf(thisDb.name) == -1) {
       db.getSiblingDB(thisDb.name).getCollectionNames().forEach(function (coll) {
-        print(`|\tCollection '${coll}'`)
+        try {
+          let cc = db.getSiblingDB(thisDb.name).getCollectionInfos({ name: coll })
+          if (cc[0]['options']['viewOn']) {
+            // it's a view
+          } else if (coll.startsWith("system.")) {
+            // it's a system collection
+          } else {
+            // it's a collection
+            collInfo += `${thisDb.name};${coll};`
 
-        print(`|\t\t Data size ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalSize / 1024) / 1024).toFixed(2)} in MB`);
-        print(`|\t\t Storage size ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().storageSize / 1024) / 1024).toFixed(2)} in MB`);
-        print(`|\t\t Index size ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalIndexSize / 1024) / 1024).toFixed(2)} in MB`);
-        print(`|\t\t Overage object size ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().avgObjSize / 1024)).toFixed(2)} in KB`);
+            if (db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalSize){
+              collInfo += `${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalSize / 1024) / 1024).toFixed(2)};`
+            }  else {
+              // 4.2
+              collInfo += `${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().size / 1024) / 1024).toFixed(2)};`
+            }
+            collInfo += `${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().storageSize / 1024) / 1024).toFixed(2)};`
+            collInfo += `${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().avgObjSize / 1024)).toFixed(2)};`
+            collInfo += `${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalIndexSize / 1024) / 1024).toFixed(2)}\n`
+            // print(collInfo)
+          }
+        } catch (err) {
+          print('err:' + err)
+        }
       });
     }
   })
+  fs.writeFile(path, collInfo, function (err) {
+    if (err) {
+      return console.log(err);
+    }
+    console.log("The file was saved! I am exiting shell");
+    process.exit(1);
+  });
 }
+
 
 
 oplog = function () {
   let div = 1000 * 1000 * 1000;
-  let oplogSize=db.getSiblingDB('local').getCollection('oplog.rs').stats().size;
+  let oplogSize = db.getSiblingDB('local').getCollection('oplog.rs').stats().size;
   print(`size ${(oplogSize / div).toFixed(2)} GB`)
   print(`max size ${(db.getSiblingDB('local').getCollection('oplog.rs').stats().maxSize / div).toFixed(2)} GB`)
-  
+
   let firstOp, cc = db.getSiblingDB('local').getCollection('oplog.rs').find({}, { op: 1, wall: 1 }).sort({ $natural: 1 }).limit(1);
-  cc.forEach(function (doc) {firstOp=doc.wall;})
+  cc.forEach(function (doc) { firstOp = doc.wall; })
   print(`first operation ${firstOp}`)
-  
+
   let lastOp, cc2 = db.getSiblingDB('local').getCollection('oplog.rs').find({}, { op: 1, wall: 1 }).sort({ $natural: -1 }).limit(1);
-  cc2.forEach(function (doc) {lastOp=doc.wall;})
+  cc2.forEach(function (doc) { lastOp = doc.wall; })
   print(`last operation ${lastOp}`)
 
-  let mstime=(lastOp.getTime()-firstOp.getTime())/(60 * 60 * 1000);
-  let oplogGBhr = (oplogSize/(mstime));
-  print(`Oplog GB/Hour ${(oplogGBhr/div).toFixed(4)}`);
+  let mstime = (lastOp.getTime() - firstOp.getTime()) / (60 * 60 * 1000);
+  let oplogGBhr = (oplogSize / (mstime));
+  print(`Oplog GB/Hour ${(oplogGBhr / div).toFixed(4)}`);
 
   // GB/hr is calculated as <size of oplog>/(<end time>-<start time>) 
 }
@@ -189,14 +285,14 @@ indexStats = function () {
           print(`|\tCollection '${coll}' - Total Index size ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalIndexSize / 1024) / 1024).toFixed(2)} in MB`);
           db.getSiblingDB(thisDb.name).getCollection(coll).aggregate([
             { $indexStats: {} },
-            { $sort: {  "name":1 ,"accesses.ops": -1}}
+            { $sort: { "name": 1, "accesses.ops": -1 } }
           ]).forEach(function (idx) {
             print(`|\t\t index '${idx.name}'`);
             print(`|\t\t\t accessed ${idx.accesses.ops} times, since ${idx.accesses.since}`);
             print(`|\t\t\t is ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().indexSizes[idx.name] / 1024) / 1024).toFixed(2)} MB big`)
             print(`|\t\t\t detected defragmentation ${db.getSiblingDB(thisDb.name).getCollection(coll).stats({ indexDetails: true }).indexDetails[idx.name]["block-manager"]["file bytes available for reuse"]} bytes`);
             print(`|\t\t\t bytes currently in cache ${db.getSiblingDB(thisDb.name).getCollection(coll).stats({ indexDetails: true }).indexDetails[idx.name]["cache"]["bytes currently in the cache"]} bytes`);
-            if (idx.spec.expireAfterSeconds){
+            if (idx.spec.expireAfterSeconds) {
               print(`|\t\t\t TTL index expireAfterSeconds:${idx.spec.expireAfterSeconds}`);
             }
             print(`|\t\t\t fields ${JSON.stringify(idx.spec.key)}`);
@@ -239,27 +335,27 @@ indexSize = function () {
 // produces dummy documents for testing
 loadDummy = function (dbName, collName, numberOfDocuments, commitEveryNDocs, dropCollection) {
   if (dropCollection) {
-      console.log(`dropping ${dbName}.${collName}`);
-      db.getSiblingDB(dbName).getCollection(collName).drop()
+    console.log(`dropping ${dbName}.${collName}`);
+    db.getSiblingDB(dbName).getCollection(collName).drop()
   }
-  if ((numberOfDocuments%commitEveryNDocs)>0){console.log(`commitEveryNDocs (${commitEveryNDocs}) must divide numberOfDocuments (${numberOfDocuments}) perfectly`);return;}
+  if ((numberOfDocuments % commitEveryNDocs) > 0) { console.log(`commitEveryNDocs (${commitEveryNDocs}) must divide numberOfDocuments (${numberOfDocuments}) perfectly`); return; }
 
-  let docs = [], batch = commitEveryNDocs; 
-  for (n=1;n<=numberOfDocuments;n++){
+  let docs = [], batch = commitEveryNDocs;
+  for (n = 1; n <= numberOfDocuments; n++) {
 
-      docs.push(genDummyDoc(n));
-      if (docs.length == batch) {
-          db.getSiblingDB(dbName).getCollection(collName).insertMany(docs, {ordered: false, writeConcern:{ w: 0, j: false }});
-          console.log(`loaded ${n} docs in ${dbName}.${collName}`)
-          docs = []
-      }
+    docs.push(genDummyDoc2(n));
+    if (docs.length == batch) {
+      db.getSiblingDB(dbName).getCollection(collName).insertMany(docs, { ordered: false, writeConcern: { w: 0, j: false } });
+      console.log(`loaded ${n} docs in ${dbName}.${collName}`)
+      docs = []
+    }
 
   }
 }
 
 
 
-genDummyDoc=function(x){
+genDummyDoc = function (x) {
   return {
     "a": x,
     "b": randomString(12),
@@ -271,9 +367,38 @@ genDummyDoc=function(x){
 }
 
 
+genDummyDoc2 = function (x) {
+  const dt = new ISODate();
+  const expdt = dt.addDays(randomNumber(120, 1000));
+  const year = expdt.getFullYear();
+
+  return {
+    "_id": randomUUID(),
+    "name": randomString(10),
+    "description": randomText(200),
+    "category": randomList(["A", "B", "C", "D", "E", "F", "F"]),
+    "createdAt": dt,
+    "updatedAt": dt,
+    "expiresAt": expdt,
+    "expirationYear": year,
+    "attributes": [
+      { "key": randomString(5), "value": randomString(15) },
+      { "key": randomString(5), "value": randomNumber(1, 10000) }
+    ],
+    "subDocument": {
+      "subField1": randomString(10),
+      "subField2": randomNumber(1, 100)
+    }
+  }
+}
+
+
+
+
+
 // mongosh --nodb
-let source = "mongodb://";
-let destination = "mongodb+srv://";
+let source = "mongodb://ilian:Password.@mongo1/?replicaSet=testRS";
+let destination = "mongodb+srv://ilian:Password.@migration.nkjj0.mongodb.net";
 
 dataValidation = function (database, collection, checkNDocs, source, destination) {
   // how many document to sample and match between the two clusters
@@ -281,22 +406,22 @@ dataValidation = function (database, collection, checkNDocs, source, destination
   // connect to the source cluster
   // connect and select random documents from a specific collection on the source cluster
   db = new Mongo(source).getDB(database);
-  let sourceIds = db.getCollection(collection).aggregate([{ "$sample": { "size": checkNDocs } }, { "$project": { "_id":1 } }])
+  let sourceIds = db.getCollection(collection).aggregate([{ "$sample": { "size": checkNDocs } }, { "$project": { "a": 1 } }])
   // connect to the destination and search for selected documents
   db = new Mongo(destination).getDB(database);
   sourceIds.forEach(__doc => {
-      // comment the print part if you don't want to see the output of every single found document
-      let doc=db.getCollection(collection).find({ "_id": __doc["_id"] }, { "_id": 1})
-      if (doc) {
-          print(doc);
-          found++;
-      }
+    // comment the print part if you don't want to see the output of every single found document
+    let doc = db.getCollection(collection).find({ "_id": __doc["_id"], "a": __doc["a"] }, { "_id": 1, "a": 1 })
+    if (doc) {
+      print(doc);
+      found++;
+    }
   });
   // output
   if (found == checkNDocs) {
-      print(`All ${checkNDocs} sampled documents in ${database}.${collection} were found on the destination cluster`)
+    print(`All ${checkNDocs} sampled documents in ${database}.${collection} were found on the destination cluster`)
   } else {
-      print(`Data validation failed. Only ${found} documents in ${database}.${collection} were found on the destination cluster`)
+    print(`Data validation failed. Only ${found} documents in ${database}.${collection} were found on the destination cluster`)
   }
 }
 
