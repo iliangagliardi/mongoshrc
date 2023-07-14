@@ -1,5 +1,20 @@
-const { exit } = require('process');
+/**
+ * IMPORTANT NOTE
+ * This script is using Nodejs extensions, 
+ * hence, it's not going to work with the old
+ * MongoDB shell
+ * Please use the new Mongosh
+ * 
+ * Install ahead these dependencies
+ * https://www.npmjs.com/package/cli-table
+ * npm install cli-table
+ * 
+ * https://www.npmjs.com/package/colors
+ * npm install colors
+ * 
+ */
 
+var colors = require('colors');
 
 ObjectId.prototype.toDate = function () {
   return new Date(parseInt(this.toJSON().substring(0, 8), 16) * 1000);
@@ -131,7 +146,7 @@ randomMongoDBGeoCoords = function (lat, long) {
 }
 
 // a quick glance at a replica set status
-checkRS = function () {
+checkRSold = function () {
   let st = rs.status(), cfg = rs.config(), nn = 0;
   st.members.forEach(s => {
     let tags = JSON.stringify(cfg.members[nn].tags);
@@ -142,17 +157,16 @@ checkRS = function () {
   });
 }
 
-//https://www.npmjs.com/package/cli-table
-//npm install cli-table
-checkRSc = function () {
+
+checkRS = function () {
   let Table = require('cli-table');
-  let table = new Table({
-    head: ['Host', 'Status', 'Priority', 'Votes', 'Health', 'Tags']
-    , colWidths: [60, 15, 10, 10, 10, 30]
-  });
   let st = rs.status(), cfg = rs.config(), nn = 0;
+  let table = new Table({
+    head: [`Hosts for ${st.set}`, 'Status', 'Priority', 'Votes', 'Health', 'Tags']
+    , colWidths: [55, 12, 12, 12, 12, 40]
+  });
   st.members.forEach(s => {
-    let tags = JSON.stringify(cfg.members[nn].tags);
+    let tags = JSON.stringify(cfg.members[nn].tags, null, 2);
     table.push([
       `${s.name}`,
       `${s.stateStr}`,
@@ -162,7 +176,8 @@ checkRSc = function () {
       `${tags}`])
     nn++;
   });
-  console.log(table.toString());
+  console.log('\n\n');
+  console.log(`${table.toString()}`);
 }
 
 
@@ -210,8 +225,9 @@ deleteAllDBs = function () {
 
 // export csv
 colls = function (path) {
+  let div = (1024*1024)
   // header
-  let collInfo = 'Database;Collection;Data size MB;Storage size MB;Avg obj size KB;Index size MB\n';
+  let collInfo = 'Database;Collection;Data size MB;Storage size MB;Avg obj size KB;Index size MB;Queries;Inserts;Updates;Removes;Commands\n';
   let excludeDB = ['admin', 'config', 'local'];
   db.getMongo().getDBs().databases.forEach(function (thisDb) {
     if (excludeDB.indexOf(thisDb.name) == -1) {
@@ -225,17 +241,24 @@ colls = function (path) {
           } else {
             // it's a collection
             collInfo += `${thisDb.name};${coll};`
-
             if (db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalSize) {
-              collInfo += `${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalSize / 1024) / 1024).toFixed(2)};`
+              collInfo += `${(db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalSize * div).toFixed(2)};`
             } else {
               // 4.2
-              collInfo += `${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().size / 1024) / 1024).toFixed(2)};`
+              collInfo += `${(db.getSiblingDB(thisDb.name).getCollection(coll).stats().size * div).toFixed(2)};`
             }
-            collInfo += `${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().storageSize / 1024) / 1024).toFixed(2)};`
-            collInfo += `${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().avgObjSize / 1024)).toFixed(2)};`
-            collInfo += `${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalIndexSize / 1024) / 1024).toFixed(2)}\n`
-            // print(collInfo)
+            collInfo += `${(db.getSiblingDB(thisDb.name).getCollection(coll).stats().storageSize * div).toFixed(2)};`
+            collInfo += `${(db.getSiblingDB(thisDb.name).getCollection(coll).stats().avgObjSize * div).toFixed(2)};`
+            collInfo += `${(db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalIndexSize * div).toFixed(2)};`
+            
+            // query statistics
+            collInfo += `${db.getSiblingDB("admin").runCommand( { top: 1 }).totals[thisDb.name+"."+coll]["queries"].count};`
+            collInfo += `${db.getSiblingDB("admin").runCommand( { top: 1 }).totals[thisDb.name+"."+coll]["insert"].count};`
+            collInfo += `${db.getSiblingDB("admin").runCommand( { top: 1 }).totals[thisDb.name+"."+coll]["update"].count};`
+            collInfo += `${db.getSiblingDB("admin").runCommand( { top: 1 }).totals[thisDb.name+"."+coll]["remove"].count};`
+            collInfo += `${db.getSiblingDB("admin").runCommand( { top: 1 }).totals[thisDb.name+"."+coll]["commands"].count}`
+            collInfo += `\n`
+            
           }
         } catch (err) {
           print('err:' + err)
@@ -278,21 +301,27 @@ oplog = function (tabled) {
         ['Max size', `${(db.getSiblingDB('local').getCollection('oplog.rs').stats().maxSize / div).toFixed(2)} GB`],
         ['First operation', `${firstOp}`],
         ['Last operation', `${lastOp}`],
-        ['Oplog GB/Hour',`${(oplogGBhr / div).toFixed(4)}`]
+        ['Oplog GB/Hour', `${(oplogGBhr / div).toFixed(4)}`]
       ]
     })
     console.log(t.toString());
   } else {
+    // let dif= Math.abs(lastOp-firstOp);
+    // d = dif/(1000 * 3600 * 24)
+
     print(`size ${(oplogSize / div).toFixed(2)} GB`)
     print(`max size ${(db.getSiblingDB('local').getCollection('oplog.rs').stats().maxSize / div).toFixed(2)} GB`)
     print(`first operation ${firstOp}`)
     print(`last operation ${lastOp}`)
+    // print(`difference in days ${d}`);
     print(`Oplog GB/Hour ${(oplogGBhr / div).toFixed(4)}`);
+  
+
   }
 }
 
-oplogEnlarge = function (n){
-  db.adminCommand({replSetResizeOplog: 1, size: Double(n)})
+oplogEnlarge = function (n) {
+  db.adminCommand({ replSetResizeOplog: 1, size: Double(n) })
   oplog(true);
 }
 
@@ -313,14 +342,13 @@ indexStats = function () {
           ]).forEach(function (idx) {
             print(`|\t\t index '${idx.name}'`);
             print(`|\t\t\t accessed ${idx.accesses.ops} times, since ${idx.accesses.since}`);
-            print(`|\t\t\t is ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().indexSizes[idx.name] / 1024) / 1024).toFixed(2)} MB big`)
-            print(`|\t\t\t detected defragmentation ${db.getSiblingDB(thisDb.name).getCollection(coll).stats({ indexDetails: true }).indexDetails[idx.name]["block-manager"]["file bytes available for reuse"]} bytes`);
-            print(`|\t\t\t bytes currently in cache ${db.getSiblingDB(thisDb.name).getCollection(coll).stats({ indexDetails: true }).indexDetails[idx.name]["cache"]["bytes currently in the cache"]} bytes`);
+            print(`|\t\t\t is ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats().indexSizes[idx.name] / 1024) / 1024).toFixed(2)} MB`)
+            print(`|\t\t\t detected fragmentation ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats({ indexDetails: true }).indexDetails[idx.name]["block-manager"]["file bytes available for reuse"] / 1024) / 1024).toFixed(2)} MB`);
+            print(`|\t\t\t bytes currently in cache ${((db.getSiblingDB(thisDb.name).getCollection(coll).stats({ indexDetails: true }).indexDetails[idx.name]["cache"]["bytes currently in the cache"] / 1024) / 1024).toFixed(2)} MB`);
             if (idx.spec.expireAfterSeconds) {
               print(`|\t\t\t TTL index expireAfterSeconds:${idx.spec.expireAfterSeconds}`);
             }
             print(`|\t\t\t fields ${JSON.stringify(idx.spec.key)}`);
-
           });
         } catch (err) {
           // when the exception occurs it is because a view or profiler collection
@@ -330,6 +358,90 @@ indexStats = function () {
     }
   })
 }
+// max cache (wiredTigerCacheSizeGB)
+// ((db.serverStatus().wiredTiger.cache["maximum bytes configured"]/1024)/1024).toFixed(2)
+// cache currently in use
+// ((db.serverStatus().wiredTiger.cache["bytes currently in the cache"]/1024)/1024).toFixed(2)
+
+// calcola la "bytes currently in cache" totale, anche rispetto a quanta ram e' disponibile a wiredtiger (80% del 50% di ram)
+// aggiungi db.getMongo().setReadPref('secondary') quando legge dai secondary
+// si deve poter collegare ad un replica e lanciare le statistiche su ogni singolo nodo
+
+
+
+// useful for migrations
+indexTTL = function () {
+  var excludeDB = ['admin', 'config', 'local'];
+  db.getMongo().getDBs().databases.forEach(function (thisDb) {
+    if (excludeDB.indexOf(thisDb.name) == -1) {
+      print(`|================================================================================================`)
+      print(`| Database '${thisDb.name}'`)
+      print(`|================================================================================================`)
+      db.getSiblingDB(thisDb.name).getCollectionNames().forEach(function (coll) {
+        try {
+          print(`|\tCollection '${coll}'`);
+          db.getSiblingDB(thisDb.name).getCollection(coll).aggregate([
+            { $indexStats: {} },
+            { $sort: { "name": 1, "accesses.ops": -1 } }
+          ]).forEach(function (idx) {
+            let specs=JSON.stringify(idx.spec)
+            if (specs.includes("expireAfterSeconds")) {
+              print(`|\t\t index '${idx.name}'`); 
+              print(`|\t\t\t TTL index expireAfterSeconds:${idx.spec.expireAfterSeconds}`);
+              print(`|\t\t\t index definition ${JSON.stringify(idx.spec.key)}`);
+            }
+          });
+        } catch (err) {
+          // when the exception occurs it is because a view or profiler collection
+          print(err)
+        }
+      })
+    }
+  })
+}
+
+
+
+
+newIndexStats = function () {
+  let Table = require('cli-table');
+  let div = 1024 * 1024;
+  let wtCacheSize = (db.serverStatus().wiredTiger.cache["maximum bytes configured"] / div).toFixed(2)
+  let currentCacheSize = (db.serverStatus().wiredTiger.cache["bytes currently in the cache"] / div).toFixed(2)
+  var excludeDB = ['admin', 'config', 'local'];
+  db.getMongo().getDBs().databases.forEach(function (thisDb) {
+    if (excludeDB.indexOf(thisDb.name) == -1) {
+      print(`\n| Database '${thisDb.name}' =================================================================================`)
+      db.getSiblingDB(thisDb.name).getCollectionNames().forEach(function (coll) {
+        try {
+          print(`| Collection '${coll}' - Total Index size ${(db.getSiblingDB(thisDb.name).getCollection(coll).stats().totalIndexSize / div).toFixed(2)} in MB`);
+
+          db.getSiblingDB(thisDb.name).getCollection(coll).aggregate([
+            { $indexStats: {} },
+            { $sort: { "name": 1, "accesses.ops": -1 } }
+          ]).forEach(function (idx) {
+            let table = new Table({
+              head: ['Index', 'Since', 'Access', 'Size MB', 'Fragm. MB', 'Cache MB', 'Fields'], colWidths: [20, 30, 15, 15, 15, 15, 40]
+            });
+            table.push([
+              `${idx.name}`,
+              `${idx.accesses.since}`,
+              `${idx.accesses.ops}`,
+              `${(db.getSiblingDB(thisDb.name).getCollection(coll).stats().indexSizes[idx.name] / div).toFixed(2)}`,
+              `${(db.getSiblingDB(thisDb.name).getCollection(coll).stats({ indexDetails: true }).indexDetails[idx.name]["block-manager"]["file bytes available for reuse"] / div).toFixed(2)}`,
+              `${(db.getSiblingDB(thisDb.name).getCollection(coll).stats({ indexDetails: true }).indexDetails[idx.name]["cache"]["bytes currently in the cache"] / div).toFixed(2)}`,
+              `${JSON.stringify(idx.spec.key)}`])
+            console.log(`${table.toString()}`);
+          });
+        } catch (err) {
+          // when the exception occurs it is because a view or profiler collection
+          print(err)
+        }
+      })
+    }
+  })
+}
+
 
 
 indexSize = function () {
@@ -357,7 +469,7 @@ indexSize = function () {
 
 
 // produces dummy documents for testing
-loadDummy = function (dbName, collName, numberOfDocuments, commitEveryNDocs, dropCollection) {
+loadTestData = function (dbName, collName, numberOfDocuments, commitEveryNDocs, dropCollection) {
   if (dropCollection) {
     console.log(`dropping ${dbName}.${collName}`);
     db.getSiblingDB(dbName).getCollection(collName).drop()
@@ -367,62 +479,81 @@ loadDummy = function (dbName, collName, numberOfDocuments, commitEveryNDocs, dro
   let docs = [], batch = commitEveryNDocs;
   for (n = 1; n <= numberOfDocuments; n++) {
 
-    docs.push(genDummyDoc2(n));
+    docs.push(genDummyDoc(n));
     if (docs.length == batch) {
       db.getSiblingDB(dbName).getCollection(collName).insertMany(docs, { ordered: false, writeConcern: { w: 0, j: false } });
       console.log(`loaded ${n} docs in ${dbName}.${collName}`)
       docs = []
     }
-
   }
 }
 
 
 
-genDummyDoc = function (x) {
+genDummyDoc2 = function (x) {
   return {
     "a": x,
     "b": randomString(12),
     "c": randomNumber(0, 100),
     "d": new ISODate(),
-    "e": randomText(500),
+    "e": randomText(100),
     "f": randomList(["A", "B", "C", "D"]),
   }
 }
 
 
-genDummyDoc2 = function (x) {
-  const dt = new ISODate();
-  const expdt = dt.addDays(randomNumber(120, 1000));
+genDummyDoc = function (x) {
+  const daysExp=randomNumber(120, 730);
+  const dt = new ISODate("2023-01-01T00:00:00.000Z");
+  const expdt = dt.addDays(daysExp);
   const year = expdt.getFullYear();
 
   return {
     "_id": randomUUID(),
     "name": randomString(10),
-    "description": randomText(200),
+    "description": randomText(20),
     "category": randomList(["A", "B", "C", "D", "E", "F", "F"]),
     "createdAt": dt,
     "updatedAt": dt,
     "expiresAt": expdt,
     "expirationYear": year,
+    "text": randomText(1000),
+    "country": randomList(["Italy", "France", "Spain", "Germany", "England", "Netherlands", "Belgium", "Portugal", "Denmark", "Norway", "Sweden", "Finland", "Poland", "Austria", "Croatia"]),
     "attributes": [
       { "key": randomString(5), "value": randomString(15) },
       { "key": randomString(5), "value": randomNumber(1, 10000) }
     ],
-    "subDocument": {
-      "subField1": randomString(10),
-      "subField2": randomNumber(1, 100)
-    }
+    // "more": genDummyDoc2(x)
   }
 }
 
 
+loadTest = function (dbs, coll, iterations) {
+  const startTime = new Date()
+  for (i = 0; i <= iterations; i++) {
+      const dt = new ISODate();
+      const expdt = dt.addDays(randomNumber(120, 1000));
+      const year = expdt.getFullYear();
 
+      let r1 = db.getSiblingDB(dbs).getCollection(coll).findOne({ "category": randomList(["A", "B", "C", "D", "E", "F"]) })
+      let r2 = db.getSiblingDB(dbs).getCollection(coll).findOneAndUpdate({ "_id": r1._id }, { $set: { "x": "".pad(500) }, $currentDate: {"updatedAt": { $type: "date" }} }, { "returnNewDocument": true })
+      let r3 = db.getSiblingDB(dbs).getCollection(coll).insertOne(genDummyDoc(i))
+      let r4 = db.getSiblingDB(dbs).getCollection(coll).deleteOne({ "_id": r3._id })
+      let r5 = db.getSiblingDB(dbs).getCollection(coll).find({ "name": /^randomList(["A", "B", "C", "D", "E", "F"])/ }).sort({ "name": 1, "category": 1 })
+      let r6 = db.getSiblingDB(dbs).getCollection(coll).find({ "subDocument.f": /randomList(["A", "B", "C", "D", "E", "F"])./ }).sort({ "subDocument.subField": 1 })
+      let r7 = db.getSiblingDB(dbs).getCollection(coll).find({ "expirationYear": year })
+
+  }
+  const endTime = new Date()
+  const diffTime = Math.abs(startTime - endTime);
+  const diffMins = Math.ceil(diffTime / (1000 * 60));
+  console.log(`Load test took ${diffMins} mins`)
+}
 
 
 // mongosh --nodb
-let source = "mongodb://";
-let destination = "mongodb+srv://";
+let source = "mongodb://ilian:Password.@mongo1/?replicaSet=testRS";
+let destination = "mongodb+srv://ilian:Password.@migration.nkjj0.mongodb.net";
 
 dataValidation = function (database, collection, checkNDocs, source, destination) {
   // how many document to sample and match between the two clusters
